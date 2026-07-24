@@ -1,10 +1,20 @@
-streamlit>=1.45.0
-pandas>=2.2.0
-numpy>=1.26.0
-matplotlib>=3.9.0
-seaborn>=0.13.2
-scikit-learn>=1.5.0
-xgboost>=3.0.0
-tensorflow>=2.18.0
-joblib>=1.4.2
-gdown>=5.2.0
+# Core app
+streamlit>=1.32,<2.0
+
+# Data & plotting
+pandas>=2.0,<3.0
+numpy>=1.24,<2.0
+matplotlib>=3.7,<4.0
+seaborn>=0.12,<1.0
+
+# ML models
+scikit-learn>=1.3,<2.0
+xgboost>=2.0,<3.0
+joblib>=1.3,<2.0
+
+# ANN model (.keras) — use tensorflow-cpu instead if deploying somewhere
+# without a GPU (e.g. Streamlit Community Cloud) to cut install size/time
+tensorflow>=2.15,<2.17
+
+# Google Drive fallback download (only used if models/ files are missing locally)
+gdown>=5.1
