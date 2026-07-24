@@ -1,12 +1,10 @@
 """
 model_utils.py
 ===============
-All the "plumbing": loading models from the local models/ folder (preferred),
-falling back to Google Drive only if a file is missing locally.
+Loads models from the local models/ folder and runs predictions with the
+correct preprocessing for each model type.
 
-You should not need to edit this file — edit config.py only if you need the
-Google Drive fallback (not required if your models/ folder is already
-populated).
+You should not need to edit this file — edit config.py if your filenames differ.
 """
 
 import os
@@ -14,11 +12,10 @@ import joblib
 import pandas as pd
 import streamlit as st
 
-from config import GDRIVE_FILE_IDS, LOCAL_FILENAMES
+from config import LOCAL_FILENAMES
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
 
 # The exact 11 features the models were trained on, in the exact order
 # the notebook used. DO NOT reorder — XGBoost/ANN both expect this order.
@@ -45,68 +42,58 @@ GENHLTH_LABELS = {
 
 
 # --------------------------------------------------------------------------
-# File resolution: models/ folder first, Google Drive only as fallback
+# File resolution + loading
 # --------------------------------------------------------------------------
 def check_local_files() -> dict:
     """Returns {key: found_bool} for each of the 4 expected files in models/.
-    Handy for showing the user exactly what's found vs. missing."""
+    Used to show a clear checklist in the sidebar if something's missing."""
     status = {}
     for key, filename in LOCAL_FILENAMES.items():
         status[key] = os.path.exists(os.path.join(MODELS_DIR, filename))
     return status
 
 
-def _download_from_drive(file_id: str, target_path: str):
-    import gdown
-    url = f"https://drive.google.com/uc?id={file_id}"
-    gdown.download(url, target_path, quiet=False)
-    if not os.path.exists(target_path) or os.path.getsize(target_path) == 0:
-        raise RuntimeError(
-            f"Download failed for {os.path.basename(target_path)}. "
-            "Check that the Google Drive file is shared as "
-            "'Anyone with the link' and that the file ID in config.py is correct."
-        )
-
-
 def _ensure_file(key: str) -> str:
-    """Return a local path to the artifact. Uses models/<filename> if it's
-    already there; only touches Google Drive if it's missing."""
     local_path = os.path.join(MODELS_DIR, LOCAL_FILENAMES[key])
-    if os.path.exists(local_path):
-        return local_path
-
-    file_id = GDRIVE_FILE_IDS.get(key, "")
-    if not file_id or "PUT_" in file_id:
+    if not os.path.exists(local_path):
         raise RuntimeError(
-            f"'{LOCAL_FILENAMES[key]}' not found in {MODELS_DIR}/, and no "
-            f"Google Drive file ID is configured in config.py for '{key}' "
-            f"either. Either copy the file into models/, or fill in "
-            f"GDRIVE_FILE_IDS['{key}'] in config.py."
+            f"'{LOCAL_FILENAMES[key]}' not found in {MODELS_DIR}/. "
+            f"Make sure it's there, or update LOCAL_FILENAMES['{key}'] in "
+            f"config.py to match your actual filename."
         )
-
-    with st.spinner(f"Downloading {LOCAL_FILENAMES[key]} from Google Drive..."):
-        _download_from_drive(file_id, local_path)
     return local_path
 
 
 @st.cache_resource(show_spinner="Loading models...")
 def load_all():
-    """Load XGBoost, ANN, scaler, and chosen thresholds. Cached across reruns."""
-    import tensorflow as tf
+    """Load XGBoost, ANN, scaler, and chosen thresholds. Cached across reruns.
 
+    ANN loading is best-effort: if TensorFlow fails to import (e.g. blocked
+    by a Windows Application Control / antivirus policy, a common corporate-
+    laptop issue), XGBoost still loads and works — ann_model is set to None
+    and ann_load_error carries the reason, which the UI checks for.
+    """
     xgb_path = _ensure_file("xgb_model")
-    ann_path = _ensure_file("ann_model")
     scaler_path = _ensure_file("scaler")
     thresh_path = _ensure_file("thresholds")
 
     xgb_model = joblib.load(xgb_path)
-    ann_model = tf.keras.models.load_model(ann_path)
     scaler = joblib.load(scaler_path)
     thresholds = joblib.load(thresh_path)
+
+    ann_model = None
+    ann_load_error = None
+    try:
+        ann_path = _ensure_file("ann_model")
+        import tensorflow as tf
+        ann_model = tf.keras.models.load_model(ann_path)
+    except Exception as e:
+        ann_load_error = str(e)
 
     return {
         "xgb_model": xgb_model,
         "ann_model": ann_model,
+        "ann_load_error": ann_load_error,
         "scaler": scaler,
         "xgb_threshold": thresholds["xgb_threshold"],
         "ann_threshold": thresholds["ann_threshold"],
@@ -124,7 +111,8 @@ def build_input_df(raw: dict) -> pd.DataFrame:
 
 def predict_both(models: dict, input_df: pd.DataFrame) -> dict:
     """Run both models on a single-row input DataFrame (unscaled, raw feature
-    values) and return probabilities + thresholded predictions for each."""
+    values) and return probabilities + thresholded predictions for each.
+    If the ANN failed to load, its fields come back as None."""
     xgb_model = models["xgb_model"]
     ann_model = models["ann_model"]
     scaler = models["scaler"]
@@ -133,17 +121,21 @@ def predict_both(models: dict, input_df: pd.DataFrame) -> dict:
     xgb_prob = float(xgb_model.predict_proba(input_df)[:, 1][0])
     xgb_pred = int(xgb_prob >= models["xgb_threshold"])
 
-    # ANN expects scaled features.
-    scaled = scaler.transform(input_df)
-    ann_prob = float(ann_model.predict(scaled, verbose=0).ravel()[0])
-    ann_pred = int(ann_prob >= models["ann_threshold"])
-
-    return {
+    result = {
         "xgb_prob": xgb_prob, "xgb_pred": xgb_pred,
         "xgb_threshold": models["xgb_threshold"],
-        "ann_prob": ann_prob, "ann_pred": ann_pred,
+        "ann_prob": None, "ann_pred": None,
         "ann_threshold": models["ann_threshold"],
     }
+
+    if ann_model is not None:
+        # ANN expects scaled features.
+        scaled = scaler.transform(input_df)
+        ann_prob = float(ann_model.predict(scaled, verbose=0).ravel()[0])
+        result["ann_prob"] = ann_prob
+        result["ann_pred"] = int(ann_prob >= models["ann_threshold"])
+
+    return result
 
 
 def xgb_feature_importance(models: dict) -> pd.Series:
