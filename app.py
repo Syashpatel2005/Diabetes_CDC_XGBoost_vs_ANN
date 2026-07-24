@@ -19,7 +19,7 @@ from sklearn.metrics import (
 )
 
 from model_utils import (
-    load_all, build_input_df, predict_both, xgb_feature_importance,
+    load_all, build_input_df, predict_both, xgb_feature_importance, check_local_files,
     FEATURE_ORDER, AGE_LABELS, INCOME_LABELS, GENHLTH_LABELS,
 )
 
@@ -49,6 +49,10 @@ if models_ready:
     st.sidebar.success("✅ Models loaded")
 else:
     st.sidebar.error("⚠️ Models not loaded")
+    with st.sidebar.expander("What's found in models/?"):
+        status = check_local_files()
+        for key, found in status.items():
+            st.write(("✅ " if found else "❌ ") + key)
 
 # ==========================================================================
 # PAGE: Home
@@ -85,10 +89,14 @@ if page == "Home":
             f"Details: {load_error}"
         )
         st.markdown(
-            "**Fix:** open `config.py` and fill in your Google Drive file "
-            "IDs for `xgb_model`, `ann_model`, `scaler`, and `thresholds` "
-            "— or place the four files directly in a `models/` folder next "
-            "to `app.py`. See `README.md` for the full walkthrough."
+            "**Fix:** make sure your 4 files are in a `models/` folder next "
+            "to `app.py`, named exactly:\n"
+            "- `xgb_diabetes_final_v2.pkl`\n"
+            "- `ann_diabetes_final_v2.keras`\n"
+            "- `scaler_diabetes_final_v2.pkl`\n"
+            "- `chosen_thresholds_v2.pkl`\n\n"
+            "Check the sidebar (\"What's found in models/?\") to see exactly "
+            "which files are missing."
         )
     else:
         st.success("Models are loaded and ready — head to **Predict** to try it.")
