@@ -19,10 +19,10 @@ they're called in Drive.
 """
 
 GDRIVE_FILE_IDS = {
-    "xgb_model":  "1RgwDsjANx4dboyU62gRk_b-3CyTDXgx5",
-    "ann_model":  "1gqbUKS8Vaad_0JiaZpVpAldhVtefZctv",
-    "scaler":     "1hIwVr_98RhS0_V3BQTKxILPWsS6f3FHM",
-    "thresholds": "1LgDzoXYL_SjA0J62NdlQwZdOjQIqVtfC",
+    "xgb_model":  "PUT_XGB_PKL_FILE_ID_HERE",
+    "ann_model":  "PUT_ANN_KERAS_FILE_ID_HERE",
+    "scaler":     "PUT_SCALER_PKL_FILE_ID_HERE",
+    "thresholds": "PUT_THRESHOLDS_PKL_FILE_ID_HERE",
 }
 
 # Local filenames the app will save these under (inside the models/ folder).
