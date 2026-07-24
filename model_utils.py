@@ -1,17 +1,16 @@
 """
 model_utils.py
 ===============
-All the "plumbing": downloading model files from Google Drive (if not present
-locally), loading them, and running predictions with the correct
-preprocessing for each model type.
+All the "plumbing": loading models from the local models/ folder (preferred),
+falling back to Google Drive only if a file is missing locally.
 
-You should not need to edit this file — edit config.py instead.
+You should not need to edit this file — edit config.py only if you need the
+Google Drive fallback (not required if your models/ folder is already
+populated).
 """
 
 import os
-import json
 import joblib
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -46,8 +45,17 @@ GENHLTH_LABELS = {
 
 
 # --------------------------------------------------------------------------
-# Download + load (cached so this only happens once per session/deployment)
+# File resolution: models/ folder first, Google Drive only as fallback
 # --------------------------------------------------------------------------
+def check_local_files() -> dict:
+    """Returns {key: found_bool} for each of the 4 expected files in models/.
+    Handy for showing the user exactly what's found vs. missing."""
+    status = {}
+    for key, filename in LOCAL_FILENAMES.items():
+        status[key] = os.path.exists(os.path.join(MODELS_DIR, filename))
+    return status
+
+
 def _download_from_drive(file_id: str, target_path: str):
     import gdown
     url = f"https://drive.google.com/uc?id={file_id}"
@@ -61,7 +69,8 @@ def _download_from_drive(file_id: str, target_path: str):
 
 
 def _ensure_file(key: str) -> str:
-    """Return a local path to the artifact, downloading from Drive if needed."""
+    """Return a local path to the artifact. Uses models/<filename> if it's
+    already there; only touches Google Drive if it's missing."""
     local_path = os.path.join(MODELS_DIR, LOCAL_FILENAMES[key])
     if os.path.exists(local_path):
         return local_path
@@ -69,9 +78,10 @@ def _ensure_file(key: str) -> str:
     file_id = GDRIVE_FILE_IDS.get(key, "")
     if not file_id or "PUT_" in file_id:
         raise RuntimeError(
-            f"'{key}' isn't set up: no local file at {local_path} and no "
-            f"Google Drive file ID configured in config.py. Either place the "
-            f"file there yourself, or fill in GDRIVE_FILE_IDS['{key}']."
+            f"'{LOCAL_FILENAMES[key]}' not found in {MODELS_DIR}/, and no "
+            f"Google Drive file ID is configured in config.py for '{key}' "
+            f"either. Either copy the file into models/, or fill in "
+            f"GDRIVE_FILE_IDS['{key}'] in config.py."
         )
 
     with st.spinner(f"Downloading {LOCAL_FILENAMES[key]} from Google Drive..."):
@@ -79,7 +89,7 @@ def _ensure_file(key: str) -> str:
     return local_path
 
 
-@st.cache_resource(show_spinner="Loading models (first run only)...")
+@st.cache_resource(show_spinner="Loading models...")
 def load_all():
     """Load XGBoost, ANN, scaler, and chosen thresholds. Cached across reruns."""
     import tensorflow as tf
