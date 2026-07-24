@@ -47,6 +47,18 @@ page = st.sidebar.radio(
 st.sidebar.divider()
 if models_ready:
     st.sidebar.success("✅ Models loaded")
+    if models["ann_model"] is None:
+        st.sidebar.warning("⚠️ ANN unavailable (XGBoost still works)")
+        with st.sidebar.expander("Why?"):
+            st.code(models["ann_load_error"], language=None)
+            st.caption(
+                "Usually a TensorFlow install/DLL issue, not a project bug. "
+                "\"Application Control policy has blocked this file\" means "
+                "Windows (or a corporate security tool) is blocking a "
+                "TensorFlow DLL — try reinstalling `tensorflow-cpu`, or ask "
+                "IT to allow-list it if this is a managed device. XGBoost "
+                "predictions are unaffected."
+            )
 else:
     st.sidebar.error("⚠️ Models not loaded")
     with st.sidebar.expander("What's found in models/?"):
@@ -89,8 +101,8 @@ if page == "Home":
             f"Details: {load_error}"
         )
         st.markdown(
-            "**Fix:** make sure your 4 files are in a `models/` folder next "
-            "to `app.py`, named exactly:\n"
+            "**Fix:** make sure your 4 files are in the `models/` folder "
+            "next to `app.py`, named exactly:\n"
             "- `xgb_diabetes_final_v2.pkl`\n"
             "- `ann_diabetes_final_v2.keras`\n"
             "- `scaler_diabetes_final_v2.pkl`\n"
@@ -183,12 +195,16 @@ elif page == "Predict":
             st.caption(f"Decision threshold: {result['xgb_threshold']:.2f}")
         with c2:
             st.markdown("### 🧠 ANN")
-            label = "🔴 Higher risk" if result["ann_pred"] == 1 else "🟢 Lower risk"
-            st.metric("Prediction", label, f"probability {result['ann_prob']:.1%}")
-            st.progress(min(max(result["ann_prob"], 0.0), 1.0))
-            st.caption(f"Decision threshold: {result['ann_threshold']:.2f}")
+            if result["ann_prob"] is None:
+                st.warning("ANN unavailable this session (TensorFlow failed "
+                           "to load) — see sidebar for details.")
+            else:
+                label = "🔴 Higher risk" if result["ann_pred"] == 1 else "🟢 Lower risk"
+                st.metric("Prediction", label, f"probability {result['ann_prob']:.1%}")
+                st.progress(min(max(result["ann_prob"], 0.0), 1.0))
+                st.caption(f"Decision threshold: {result['ann_threshold']:.2f}")
 
-        if result["xgb_pred"] != result["ann_pred"]:
+        if result["ann_pred"] is not None and result["xgb_pred"] != result["ann_pred"]:
             st.warning(
                 "The two models disagree on the classification at their "
                 "chosen thresholds — worth looking at both probabilities "
@@ -258,13 +274,18 @@ elif page == "Evaluate on a Test CSV":
         else:
             X_test = test_df[FEATURE_ORDER]
             y_test = test_df["Diabetes_binary"].astype(int)
+            ann_available = models["ann_model"] is not None
 
             xgb_prob = models["xgb_model"].predict_proba(X_test)[:, 1]
             xgb_pred = (xgb_prob >= models["xgb_threshold"]).astype(int)
 
-            scaled = models["scaler"].transform(X_test)
-            ann_prob = models["ann_model"].predict(scaled, verbose=0).ravel()
-            ann_pred = (ann_prob >= models["ann_threshold"]).astype(int)
+            if not ann_available:
+                st.warning("ANN unavailable this session (TensorFlow failed "
+                           "to load) — showing XGBoost results only.")
+            else:
+                scaled = models["scaler"].transform(X_test)
+                ann_prob = models["ann_model"].predict(scaled, verbose=0).ravel()
+                ann_pred = (ann_prob >= models["ann_threshold"]).astype(int)
 
             def metrics_row(name, y_true, pred, prob):
                 return {
@@ -276,15 +297,18 @@ elif page == "Evaluate on a Test CSV":
                     "ROC AUC": roc_auc_score(y_true, prob),
                 }
 
-            results_df = pd.DataFrame([
-                metrics_row("XGBoost", y_test, xgb_pred, xgb_prob),
-                metrics_row("ANN", y_test, ann_pred, ann_prob),
-            ]).set_index("Model")
+            rows = [metrics_row("XGBoost", y_test, xgb_pred, xgb_prob)]
+            if ann_available:
+                rows.append(metrics_row("ANN", y_test, ann_pred, ann_prob))
+            results_df = pd.DataFrame(rows).set_index("Model")
 
             st.subheader("Metrics")
             st.dataframe(results_df.style.format("{:.4f}"), use_container_width=True)
 
-            c1, c2 = st.columns(2)
+            if ann_available:
+                c1, c2 = st.columns(2)
+            else:
+                c1, = st.columns(1)
             with c1:
                 cm = confusion_matrix(y_test, xgb_pred)
                 fig, ax = plt.subplots(figsize=(4, 3.5))
@@ -293,14 +317,15 @@ elif page == "Evaluate on a Test CSV":
                 ax.set_title("XGBoost — Confusion Matrix")
                 ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
                 st.pyplot(fig, clear_figure=True)
-            with c2:
-                cm = confusion_matrix(y_test, ann_pred)
-                fig, ax = plt.subplots(figsize=(4, 3.5))
-                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                            xticklabels=["No", "Yes"], yticklabels=["No", "Yes"], ax=ax)
-                ax.set_title("ANN — Confusion Matrix")
-                ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
-                st.pyplot(fig, clear_figure=True)
+            if ann_available:
+                with c2:
+                    cm = confusion_matrix(y_test, ann_pred)
+                    fig, ax = plt.subplots(figsize=(4, 3.5))
+                    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                                xticklabels=["No", "Yes"], yticklabels=["No", "Yes"], ax=ax)
+                    ax.set_title("ANN — Confusion Matrix")
+                    ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
+                    st.pyplot(fig, clear_figure=True)
 
 # ==========================================================================
 # PAGE: About
